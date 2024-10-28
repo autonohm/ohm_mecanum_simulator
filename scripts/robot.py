@@ -340,6 +340,8 @@ class Robot:
         # print(len(distances))
         return distances
     def publish_LiDAR(self, distances):
+        if not use_mrc_config:
+            exit()
         scan = LaserScan()  
         scan.header.stamp = self._timestamp
         scan.header.frame_id = "/laser"
@@ -361,6 +363,7 @@ class Robot:
             else:
                 scan.ranges.append(distances[i] )
                 scan.intensities.append(0)
+
         self._pub_laser.publish(scan)
          
     def get_coords(self):
