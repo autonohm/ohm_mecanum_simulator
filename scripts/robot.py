@@ -10,6 +10,7 @@ import os
 import pygame
 import rospy
 import time, threading
+import concurrent.futures
 import operator
 import numpy as np
 import tf
@@ -279,16 +280,19 @@ class Robot:
         self._pub_tof.publish(msg)
 
     # Bresenham's line algorithm to calculate all points between two points
-    def bresenham_line(self, x0, y0, x1, y1):
+    def bresenham_line(self, x0, y0, x1, y1, step = 3):
         points = []
         dx = abs(x1 - x0)
         dy = abs(y1 - y0)
         sx = 1 if x0 < x1 else -1
         sy = 1 if y0 < y1 else -1
         err = dx - dy
-        
+        count = 0  # Initialize a counter to track steps
         while True:
-            points.append((x0, y0))
+            # Only add point to list every 'step' intervals to reduce the number of points
+            if count % step == 0:
+                points.append((x0, y0))
+            count += 1
             if x0 == x1 and y0 == y1:
                 break
             e2 = err * 2
@@ -299,52 +303,89 @@ class Robot:
                 err += dx
                 y0 += sy
         return points
-    def LiDAR_sensing(self,robot_pose, map):
-        # robot pose it expressed by pixel_robot and heading, meter_to_pixel = 100, so the range of laser is 9m * 100pixel/m = 900 pixel
-        distances = []
-        r_x, r_y, r_heading  = robot_pose[0], robot_pose[1], robot_pose[2]
-        start_angle = -r_heading + self._angle_min
-        end_angle = -r_heading + self._angle_max
+    # LiDAR sensing calculation for a single angle
+    def calculate_lidar_angle(self, index, angle, robot_pose, map, meter_to_pixel=100):
+        # distances = []
+        r_x, r_y, _ = robot_pose
         min_range = self._obstacle_radius
-        # laser beams are inverted, so we need to iterate from end_angle to start_angle
-        for angle in np.arange(end_angle, start_angle, - self._angle_inc):
-            # Calculate laser end point (max range of laser)
-            x2 = int(r_x + self._laser_range * 100 * math.cos(angle))
-            y2 = int(r_y + self._laser_range * 100 * math.sin(angle))
-            
-            # Calculate minimum range start point
-            x1 = int(min_range * 100 * math.cos(angle) + r_x)
-            y1 = int(min_range * 100 * math.sin(angle) + r_y)
-            
-            # Get all points along the laser beam using Bresenham's line algorithm
-            points_on_line = self.bresenham_line(x1, y1, x2, y2)
+        # Calculate laser end point (max range of laser)
+        x2 = int(r_x + self._laser_range * meter_to_pixel * math.cos(angle))
+        y2 = int(r_y + self._laser_range * meter_to_pixel * math.sin(angle))
+        
+        # Calculate minimum range start point
+        x1 = int(min_range * meter_to_pixel * math.cos(angle) + r_x)
+        y1 = int(min_range * meter_to_pixel * math.sin(angle) + r_y)
+        
+        # Get all points along the laser beam using Bresenham's line algorithm
+        points_on_line = self.bresenham_line(x1, y1, x2, y2)
+        # Iterate over the points and check for obstacles
+        distance = self._laser_range
+        for x, y in points_on_line:
+            if 0 < x < map.get_width() and 0 < y < map.get_height():
+                color = map.get_at((x, y))
+                
+                # If an obstacle (black or red), calculate distance and break
+                if (color[0], color[1], color[2]) == (0, 0, 0) or (color[0], color[1], color[2]) == (255, 0, 0):
+                    obstacle = math.sqrt((x - r_x) ** 2 + (y - r_y) ** 2)
+                    distance = obstacle / meter_to_pixel
+                    break
+                map.set_at((x, y), (0, 208, 255))
+        return index, distance
 
-            # Iterate over the points and check for obstacles
-            for x, y in points_on_line:
-                if 0 < x < map.get_width() and 0 < y < map.get_height():
-                    color = map.get_at((x, y))
-                    
-                    # If an obstacle (black or red), calculate distance and break
-                    if (color[0], color[1], color[2]) == (0, 0, 0) or (color[0], color[1], color[2]) == (255, 0, 0):
-                        obstacle = math.sqrt((x - r_x) ** 2 + (y - r_y) ** 2)
-                        distances.append(obstacle / 100)  # Convert pixels to meters
-                        break
-                    # If no obstacle, append maximum range to distances list
-                    if(x == x2 and y == y2):
-                        distances.append(self._laser_range)  # If end point, append maximum range to distances list
-                    # Optionally, mark the laser path (for visualization)
-                    map.set_at((x, y), (0, 208, 255))
-                else:
-                    distances.append(self._laser_range)  # If out of map, append maximum range to distances list
-        # print size of distances debug for beams, size should be 270
-        # print(len(distances))
-        return distances
+    # Main LiDAR sensing function using multithreading
+    def LiDAR_sensing(self, robot_pose, map, num_threads=2):
+        distances = []
+        r_heading = robot_pose[2]
+        angle_min = self._angle_min
+        angle_max = self._angle_max
+        angle_inc = self._angle_inc
+        start_angle = -r_heading + angle_min
+        end_angle = -r_heading + angle_max
+        
+        # List to store results in the correct order
+        angles = np.arange(end_angle, start_angle, -angle_inc)
+        num_angles = len(angles)
+        distances = [0] * num_angles
+
+        ### using a defined number of threads may be faster than using all available threads 
+        # Define a helper function to process a range of angles
+
+        # def process_angles(start_idx, end_idx):
+        #     for i in range(start_idx, end_idx):
+        #         angle = angles[i]
+        #         distances[i] = self.calculate_lidar_angle(i, angle, robot_pose, map)
+                
+        # # Using ThreadPoolExecutor for multithreading
+        # # Divide angles among threads: deprecated due to GIL (use a defined number of threads)
+
+        # with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+        #     step = num_angles // num_threads
+        #     futures = [
+        #         executor.submit(process_angles, i * step, (i + 1) * step)
+        #         for i in range(num_threads)
+        #     ]
+        #     # Collect the results
+        #     concurrent.futures.wait(futures)
+
+        # use maximal threads 
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            # Submit a thread for each angle calculation
+            futures = [
+                executor.submit(self.calculate_lidar_angle, i, angle, robot_pose, map)
+                for i, angle in enumerate(angles)
+            ]
+            # Collect the results as they complete
+            for future in concurrent.futures.as_completed(futures):
+                index, distance = future.result()
+                distances[index] = distance
+        return distances    
+    
     def publish_LiDAR(self, distances):
         if not use_mrc_config:
             exit()
         scan = LaserScan()  
         scan.header.stamp = self._timestamp
-        scan.header.frame_id = "/laser"
+        scan.header.frame_id = "laser"
         scan.angle_min = self._angle_min
         scan.angle_max = self._angle_max
         scan.angle_increment = self._angle_inc
