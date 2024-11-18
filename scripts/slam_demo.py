@@ -42,7 +42,7 @@ class SLAM_Demo:
         self.green = (0, 255, 0)
         self.red = (255, 0, 0)
         self.white = (255, 255, 255)
-        self._name = "robot1"
+        self._name = "kobuki"
         self._sub_pose          = rospy.Subscriber(str(self._name)+"/pose", PoseStamped, self.callback_pose)
         self._sub_laser         = rospy.Subscriber(str(self._name)+"/laser", LaserScan, self.callback_laser)
         self._pub_cmd_vel       = rospy.Publisher(str(self._name)+"/cmd_vel", Twist, queue_size=1)

@@ -78,7 +78,7 @@ The simulator listens to velocity commands, as published by e.g. the [teleop_twi
 To publish them manually, you can use the following command:
 
 ```
-rosrun teleop_twist_keyboard teleop_twist_keyboard.py cmd_vel:=/robot1/cmd_vel
+rosrun teleop_twist_keyboard teleop_twist_keyboard.py cmd_vel:=/kobuki/cmd_vel
 ```
 
 ## Creating a map
