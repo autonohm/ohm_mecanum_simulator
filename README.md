@@ -17,7 +17,7 @@ other requirements should be set up automatically.
 Go to your ROS2 workspace / execute the following commands (replace the path to your workspace accordingly):
 ```console
 user@machine:~$ cd ros2_ws
-user@machine:~/ros2_ws$ colcon build
+user@machine:~/ros2_ws$ colcon build --symlink-install
 user@machine:~/ros2_ws$ source install/setup.bash
 user@machine:~/ros2_ws$ ros2 run ohm_mecanum_sim ohm_mecanum_sim_node
 ```
